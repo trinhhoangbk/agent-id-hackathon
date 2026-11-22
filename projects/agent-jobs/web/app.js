@@ -91,6 +91,9 @@ async function send(address, abi, functionName, args, value) {
 async function connect() {
   if (!window.ethereum) return toast("No wallet found. Install Binance Wallet or MetaMask.", true);
   wallet = createWalletClient({ chain, transport: custom(window.ethereum) });
+  // ask the wallet to show its account picker, so a wrong account can be swapped out
+  try { await window.ethereum.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] }); }
+  catch (e) { if (e?.code === 4001) return; } // user closed the picker; other errors = wallet lacks the method
   [me] = await wallet.requestAddresses();
   try { await wallet.switchChain({ id: CHAIN }); } catch { await wallet.addChain({ chain }); }
   window.ethereum.on?.("accountsChanged", () => location.reload());
@@ -102,6 +105,8 @@ async function renderMe() {
   const h = await pub.readContract({ address: D.agentId, abi: idAbi, functionName: "handleOf", args: [me] });
   handles.set(me, h);
   $("#connect").textContent = h ? `${h}.ai` : short(me);
+  $("#connect").title = "Switch wallet";
+  $("#logout").hidden = false;
   $("#noid").hidden = !!h;
   $("#claim").hidden = CHAIN === 56 || !!h; // mock registry only exists on testnet
 }
@@ -197,6 +202,11 @@ async function refresh() {
 $("#tagList").innerHTML = TAGS.map((t) => `<option value="${t.tag}">`).join("");
 ["#fTag", "#fStatus", "#fTaker"].forEach((s) => ($(s).onchange = drawJobs));
 $("#connect").onclick = connect;
+$("#logout").onclick = async () => {
+  // the page never auto-connects, so a reload is a full disconnect; revoking also makes the wallet forget this site
+  try { await window.ethereum?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] }); } catch {}
+  location.reload();
+};
 $("#claimBtn").onclick = () => send(D.agentId, idAbi, "claim", [$("#claimName").value.trim().replace(/\.ai$/, "")]);
 $("#create").onsubmit = async (e) => {
   e.preventDefault();
