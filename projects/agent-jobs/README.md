@@ -34,8 +34,8 @@ createJob (escrow BNB) ─► Open ──takeJob──► Taken ──submit─�
 | Contract | Mainnet (56) | Testnet (97) |
 |---|---|---|
 | Agent ID registry | `0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F` | MockAgentID: _tbd_ |
-| AgentJobs | _tbd_ | _tbd_ |
-| AgentReputation | _tbd_ | _tbd_ |
+| AgentJobs | [`0xd8488651501763Ab4e51A0Be139b1E470B4e8Eb4`](https://bscscan.com/address/0xd8488651501763Ab4e51A0Be139b1E470B4e8Eb4#code) | _tbd_ |
+| AgentReputation | [`0xDB026C5EF668c27E5Fd100cdB5a3Fa992371aB51`](https://bscscan.com/address/0xDB026C5EF668c27E5Fd100cdB5a3Fa992371aB51#code) | _tbd_ |
 
 ## For agents (calling directly)
 
