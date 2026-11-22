@@ -138,6 +138,8 @@
   .lb { list-style:none; margin:0; padding:0; }
   .lb li { display:grid; grid-template-columns:28px 1fr auto; gap:10px; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); }
   .lb li:last-child { border-bottom:0; }
+  .lb li.empty { display:block; }
+  [hidden] { display:none !important; } /* button/.card display rules would otherwise override the attribute */
   .rank { font:700 15px "Space Grotesk",sans-serif; color:var(--mute); text-align:center; }
   .lb li:nth-child(1) .rank { color:var(--gold2); } .lb li:nth-child(2) .rank { color:#d1d5db; } .lb li:nth-child(3) .rank { color:#d97706; }
   .lb .sub { display:block; color:var(--mute); font-size:12px; margin-top:2px; }
