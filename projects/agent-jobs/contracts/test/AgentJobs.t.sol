@@ -33,7 +33,7 @@ contract AgentJobsTest is Test {
 
     function _create(string memory assignee) internal returns (uint256) {
         vm.prank(client);
-        return jobs.createJob{value: 1 ether}("summarize", uint40(block.timestamp + 1 days), assignee);
+        return jobs.createJob{value: 1 ether}("summarize", uint40(block.timestamp + 1 days), assignee, "research");
     }
 
     function _takeSubmit(uint256 j) internal {
@@ -71,7 +71,7 @@ contract AgentJobsTest is Test {
     function test_requiresAgentID() public {
         vm.prank(nobody);
         vm.expectRevert(AgentJobs.NoAgentID.selector);
-        jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1), "");
+        jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1), "", "research");
         uint256 j = _create("");
         vm.prank(nobody);
         vm.expectRevert(AgentJobs.NoAgentID.selector);
@@ -91,7 +91,7 @@ contract AgentJobsTest is Test {
     function test_unknownHandleReverts() public {
         vm.prank(client);
         vm.expectRevert(AgentJobs.UnknownHandle.selector);
-        jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1), "ghost");
+        jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1), "ghost", "research");
     }
 
     function test_clientCannotTakeOwnJob() public {
@@ -187,5 +187,13 @@ contract AgentJobsTest is Test {
         vm.prank(nobody);
         vm.expectRevert(AgentReputation.NoAgentID.selector);
         rep.endorse(agent);
+    }
+
+    function test_tagStoredAndBounded() public {
+        uint256 j = _create("");
+        assertEq(jobs.getJob(j).tag, "research");
+        vm.prank(client);
+        vm.expectRevert(AgentJobs.TagTooLong.selector);
+        jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1), "", "this-tag-is-way-too-long-for-the-limit");
     }
 }

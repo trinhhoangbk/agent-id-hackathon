@@ -18,11 +18,11 @@ contract MainnetForkTest is Test {
         vm.deal(client, 1 ether);
         vm.prank(client);
         vm.expectRevert(AgentJobs.NoAgentID.selector);
-        jobs.createJob{value: 0.1 ether}("x", uint40(block.timestamp + 1 days), "");
+        jobs.createJob{value: 0.1 ether}("x", uint40(block.timestamp + 1 days), "", "research");
 
         vm.deal(HOLDER, 1 ether);
         vm.prank(HOLDER);
-        jobs.createJob{value: 0.1 ether}("x", uint40(block.timestamp + 1 days), "");
+        jobs.createJob{value: 0.1 ether}("x", uint40(block.timestamp + 1 days), "", "research");
         assertEq(jobs.getJob(0).client, HOLDER);
     }
 }

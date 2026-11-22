@@ -2,6 +2,7 @@ import {
   createPublicClient, createWalletClient, custom, http, parseAbi, parseEther, formatEther, defineChain,
 } from "https://cdn.jsdelivr.net/npm/viem@2.21.55/+esm";
 import { CHAIN, DEPLOYMENTS } from "./config.js";
+import { autoTag, TAGS } from "./tagger.js";
 
 const D = DEPLOYMENTS[CHAIN];
 const chain = defineChain({
@@ -16,14 +17,14 @@ const idAbi = parseAbi([
   "function claim(string)",
 ]);
 const jobsAbi = parseAbi([
-  "function createJob(string spec, uint40 deadline, string assignee) payable returns (uint256)",
+  "function createJob(string spec, uint40 deadline, string assignee, string tag) payable returns (uint256)",
   "function takeJob(uint256)",
   "function submit(uint256, string)",
   "function approve(uint256, uint8)",
   "function release(uint256)",
   "function refund(uint256)",
   "function jobsCount() view returns (uint256)",
-  "function getJob(uint256) view returns ((address client, address agent, uint96 reward, uint40 deadline, uint40 submittedAt, uint8 status, string spec, string result))",
+  "function getJob(uint256) view returns ((address client, address agent, uint96 reward, uint40 deadline, uint40 submittedAt, uint8 status, string spec, string result, string tag))",
   "function REVIEW_PERIOD() view returns (uint256)",
 ]);
 const repAbi = parseAbi([
@@ -36,11 +37,14 @@ const repAbi = parseAbi([
 
 const pub = createPublicClient({ chain, transport: http(D.rpc) });
 let wallet, me;
+let jobs = []; // [{ id, j }] newest first
+let review = 0;
 const ZERO = "0x0000000000000000000000000000000000000000";
 const STATUS = ["Open", "Taken", "Submitted", "Paid", "Refunded"];
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const short = (a) => a.slice(0, 6) + "…" + a.slice(-4);
+const normTag = (t) => t.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 32);
 const handles = new Map();
 
 async function nameOf(addr) {
@@ -68,6 +72,7 @@ async function send(address, abi, functionName, args, value) {
     if (rc.status !== "success") throw new Error("Transaction reverted on-chain");
     toast("Confirmed ✓");
     await refresh();
+    return true;
   } catch (e) {
     toast(e.shortMessage || e.message, true);
   }
@@ -91,15 +96,35 @@ async function renderMe() {
   $("#claim").hidden = CHAIN === 56 || !!h; // mock registry only exists on testnet
 }
 
-async function renderJobs() {
+async function loadJobs() {
   const n = Number(await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "jobsCount" }));
   const ids = [...Array(n).keys()].reverse(); // shortcut: reads every job; paginate/index events past a few hundred
-  const jobs = await Promise.all(ids.map((i) => pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "getJob", args: [BigInt(i)] })));
+  const list = await Promise.all(ids.map((i) => pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "getJob", args: [BigInt(i)] })));
+  review = Number(await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "REVIEW_PERIOD" }));
+  jobs = list.map((j, k) => ({ id: ids[k], j }));
+  const used = [...new Set([...TAGS.map((t) => t.tag), ...jobs.map(({ j }) => j.tag).filter(Boolean)])];
+  const sel = $("#fTag"), cur = sel.value;
+  sel.innerHTML = `<option value="">All tags</option>` + used.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  sel.value = cur;
+  await drawJobs();
+}
+
+function matches({ j }) {
+  const tag = $("#fTag").value, st = $("#fStatus").value, tk = $("#fTaker").value;
+  if (tag && j.tag !== tag) return false;
+  if (st === "active" && j.status > 2) return false;
+  if (st === "done" && j.status !== 3) return false;
+  if (st === "refunded" && j.status !== 4) return false;
+  if (tk === "none" && j.status !== 0) return false; // open = nobody has taken it (a direct hire may be waiting)
+  if (tk === "taken" && !(j.status >= 1 && j.status <= 3)) return false;
+  return true;
+}
+
+async function drawJobs() {
   const now = Date.now() / 1000;
-  const review = Number(await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "REVIEW_PERIOD" }));
   const meL = me?.toLowerCase();
-  const rows = await Promise.all(jobs.map(async (j, k) => {
-    const id = ids[k];
+  const shown = jobs.filter(matches);
+  const rows = await Promise.all(shown.map(async ({ id, j }) => {
     const isClient = j.client.toLowerCase() === meL, isAgent = j.agent.toLowerCase() === meL;
     const late = now >= Number(j.deadline);
     const acts = [];
@@ -109,14 +134,14 @@ async function renderJobs() {
     if (j.status === 2 && isAgent && now >= Number(j.submittedAt) + review) acts.push(`<button data-a="release" data-id="${id}">Release payment</button>`);
     if (isClient && (j.status === 0 || (j.status === 1 && late))) acts.push(`<button class="ghost" data-a="refund" data-id="${id}">Refund</button>`);
     return `<article class="job s${j.status}">
-      <header><b>#${id}</b> <span class="pill">${STATUS[j.status]}</span> <span class="reward">${formatEther(j.reward)} BNB</span></header>
+      <header><b>#${id}</b> <span class="pill">${STATUS[j.status]}</span>${j.tag ? ` <span class="tag">${esc(j.tag)}</span>` : ""} <span class="reward">${formatEther(j.reward)} BNB</span></header>
       <p class="spec">${esc(j.spec)}</p>
       ${j.result ? `<p class="result"><b>Result:</b> ${esc(j.result)}</p>` : ""}
       <p class="meta">by ${await who(j.client)} → ${await who(j.agent)} · deadline ${new Date(Number(j.deadline) * 1000).toLocaleString()}</p>
       ${acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}
     </article>`;
   }));
-  $("#jobs").innerHTML = rows.join("") || `<p class="empty">No jobs yet. Post the first one.</p>`;
+  $("#jobs").innerHTML = rows.join("") || `<p class="empty">${jobs.length ? "No jobs match these filters." : "No jobs yet. Post the first one."}</p>`;
 }
 
 async function renderBoard() {
@@ -127,26 +152,37 @@ async function renderBoard() {
   const list = addrs.map((a, i) => ({ a, r: reps[i], e: done[i] })).sort((x, y) => y.r[0] - x.r[0] || y.r[3] - x.r[3]);
   $("#board").innerHTML = (await Promise.all(list.map(async ({ a, r, e }, i) => {
     const avg = r[1] ? (r[2] / r[1]).toFixed(2) + " ★" : "–";
-    const btn = me && !e && a.toLowerCase() !== me.toLowerCase() ?`<button class="ghost" data-a="endorse" data-addr="${a}">Endorse</button>` : "";
+    const btn = me && !e && a.toLowerCase() !== me.toLowerCase() ? `<button class="ghost" data-a="endorse" data-addr="${a}">Endorse</button>` : "";
     return `<tr><td>${i + 1}</td><td>${await who(a)}</td><td>${r[0]}</td><td>${avg}</td><td>${r[3]}</td><td>${formatEther(r[4])}</td><td>${btn}</td></tr>`;
   }))).join("") || `<tr><td colspan="7" class="empty">No reputation yet.</td></tr>`;
 }
 
 async function refresh() {
   try {
-    await Promise.all([renderMe(), renderJobs(), renderBoard()]);
+    await Promise.all([renderMe(), loadJobs(), renderBoard()]);
   } catch (e) {
     toast(e.shortMessage || e.message, true);
   }
 }
 
+$("#tagList").innerHTML = TAGS.map((t) => `<option value="${t.tag}">`).join("");
+["#fTag", "#fStatus", "#fTaker"].forEach((s) => ($(s).onchange = drawJobs));
 $("#connect").onclick = connect;
 $("#claimBtn").onclick = () => send(D.agentId, idAbi, "claim", [$("#claimName").value.trim().replace(/\.ai$/, "")]);
-$("#create").onsubmit = (e) => {
+$("#create").onsubmit = async (e) => {
   e.preventDefault();
-  const f = e.target;
+  const f = e.target, hint = $("#tagHint");
+  if (!wallet) return toast("Connect wallet first", true);
+  let tag = normTag(f.tag.value);
+  if (!tag) {
+    hint.textContent = "AI is picking a tag…";
+    tag = await autoTag(f.spec.value, (msg) => (hint.textContent = msg));
+    f.tag.value = tag; // visible to the user before the wallet prompt
+    hint.textContent = `AI tagged this job as “${tag}”`;
+  }
   const deadline = BigInt(Math.floor(Date.now() / 1000 + Number(f.days.value) * 86400));
-  send(D.jobs, jobsAbi, "createJob", [f.spec.value.trim(), deadline, f.assignee.value.trim().replace(/\.ai$/, "")], parseEther(f.reward.value));
+  const ok = await send(D.jobs, jobsAbi, "createJob", [f.spec.value.trim(), deadline, f.assignee.value.trim().replace(/\.ai$/, ""), tag], parseEther(f.reward.value));
+  if (ok) { f.spec.value = ""; f.tag.value = ""; hint.textContent = ""; }
 };
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-a]");
@@ -162,5 +198,5 @@ document.addEventListener("click", (e) => {
 });
 
 $("#net").textContent = D.name;
-$("#contracts").innerHTML = `AgentJobs <a href="${D.explorer}/address/${D.jobs}#code" target="_blank" rel="noopener">${short(D.jobs || ZERO)}</a> · Reputation <a href="${D.explorer}/address/${D.reputation}#code" target="_blank" rel="noopener">${short(D.reputation || ZERO)}</a>`;
+$("#contracts").innerHTML = `Jobs <a href="${D.explorer}/address/${D.jobs}#code" target="_blank" rel="noopener">${short(D.jobs || ZERO)}</a> · Reputation <a href="${D.explorer}/address/${D.reputation}#code" target="_blank" rel="noopener">${short(D.reputation || ZERO)}</a>`;
 if (D.jobs) refresh(); else $("#jobs").innerHTML = `<p class="empty">Contracts not deployed on this network yet.</p>`;

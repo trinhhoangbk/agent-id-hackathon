@@ -25,6 +25,7 @@ contract AgentJobs {
         Status status;
         string spec;
         string result;
+        string tag; // category, lowercase; set by client or auto-suggested by the UI
     }
 
     /// After submission the client has this long to approve; then the agent can self-release.
@@ -52,6 +53,7 @@ contract AgentJobs {
     error TooLate();
     error BadRating();
     error TransferFailed();
+    error TagTooLong();
 
     constructor(IAgentID _agentId) {
         agentId = _agentId;
@@ -64,7 +66,8 @@ contract AgentJobs {
     }
 
     /// @param assignee Agent ID handle without ".ai" to hire directly, or "" for an open job.
-    function createJob(string calldata spec, uint40 deadline, string calldata assignee)
+    /// @param tag Short category label (max 32 bytes), e.g. "research".
+    function createJob(string calldata spec, uint40 deadline, string calldata assignee, string calldata tag)
         external
         payable
         onlyHolder
@@ -72,6 +75,7 @@ contract AgentJobs {
     {
         if (msg.value == 0) revert ZeroReward();
         if (deadline <= block.timestamp) revert BadDeadline();
+        if (bytes(tag).length > 32) revert TagTooLong();
         address agent;
         if (bytes(assignee).length != 0) {
             agent = agentId.ownerOfHandle(assignee);
@@ -79,7 +83,7 @@ contract AgentJobs {
             if (agent == msg.sender) revert NotAssignee();
         }
         id = _jobs.length;
-        _jobs.push(Job(msg.sender, agent, uint96(msg.value), deadline, 0, Status.Open, spec, ""));
+        _jobs.push(Job(msg.sender, agent, uint96(msg.value), deadline, 0, Status.Open, spec, "", tag));
         emit JobCreated(id, msg.sender, agent, msg.value, deadline);
     }
 
