@@ -53,7 +53,17 @@ async function nameOf(addr) {
   const h = handles.get(addr);
   return h ? `${h}.ai` : short(addr);
 }
-const who = async (a) => (a && a !== ZERO ? `<a href="${D.explorer}/address/${a}" target="_blank" rel="noopener">${esc(await nameOf(a))}</a>` : "anyone");
+// Deterministic gradient avatar from the address, so each Agent ID has a recognizable face.
+const avBg = (a) => {
+  const h1 = parseInt(a.slice(2, 6), 16) % 360, h2 = parseInt(a.slice(6, 10), 16) % 360;
+  return `conic-gradient(from ${h1}deg, hsl(${h1} 85% 60%), hsl(${h2} 80% 55%), hsl(${h1} 85% 60%))`;
+};
+const who = async (a) => (a && a !== ZERO
+  ? `<a class="who" href="${D.explorer}/address/${a}" target="_blank" rel="noopener"><span class="av" style="background:${avBg(a)}"></span>${esc(await nameOf(a))}</a>`
+  : `<span class="who">anyone</span>`);
+const TAG_COLORS = { research: "#22d3ee", trading: "#f0b90b", coding: "#a78bfa", writing: "#f472b6", translation: "#34d399", data: "#60a5fa", design: "#fb923c", marketing: "#facc15", other: "#94a3b8" };
+const tagColor = (t) => TAG_COLORS[t] ?? `hsl(${[...t].reduce((s, c) => s + c.charCodeAt(0), 0) % 360} 70% 65%)`;
+const bnb = (wei) => { const n = Number(formatEther(wei)); return n >= 1 ? n.toFixed(2) : n.toPrecision(2).replace(/\.?0+$/, ""); };
 
 function toast(msg, isErr) {
   const t = $("#toast");
@@ -106,6 +116,9 @@ async function loadJobs() {
   const sel = $("#fTag"), cur = sel.value;
   sel.innerHTML = `<option value="">All tags</option>` + used.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   sel.value = cur;
+  $("#stJobs").textContent = jobs.length;
+  $("#stOpen").textContent = jobs.filter(({ j }) => j.status === 0).length;
+  $("#stPaid").textContent = bnb(jobs.filter(({ j }) => j.status === 3).reduce((s, { j }) => s + j.reward, 0n));
   await drawJobs();
 }
 
@@ -134,14 +147,15 @@ async function drawJobs() {
     if (j.status === 2 && isAgent && now >= Number(j.submittedAt) + review) acts.push(`<button data-a="release" data-id="${id}">Release payment</button>`);
     if (isClient && (j.status === 0 || (j.status === 1 && late))) acts.push(`<button class="ghost" data-a="refund" data-id="${id}">Refund</button>`);
     return `<article class="job s${j.status}">
-      <header><b>#${id}</b> <span class="pill">${STATUS[j.status]}</span>${j.tag ? ` <span class="tag">${esc(j.tag)}</span>` : ""} <span class="reward">${formatEther(j.reward)} BNB</span></header>
+      <header><span class="jid">#${id}</span><span class="pill">${STATUS[j.status]}</span>${j.tag ? `<span class="tag" style="--tc:${tagColor(j.tag)}">${esc(j.tag)}</span>` : ""}<span class="reward">${formatEther(j.reward)}<small>BNB</small></span></header>
       <p class="spec">${esc(j.spec)}</p>
       ${j.result ? `<p class="result"><b>Result:</b> ${esc(j.result)}</p>` : ""}
-      <p class="meta">by ${await who(j.client)} → ${await who(j.agent)} · deadline ${new Date(Number(j.deadline) * 1000).toLocaleString()}</p>
+      <p class="meta">${await who(j.client)} <span aria-label="to">→</span> ${await who(j.agent)} · ⏱ ${new Date(Number(j.deadline) * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</p>
       ${acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}
     </article>`;
   }));
-  $("#jobs").innerHTML = rows.join("") || `<p class="empty">${jobs.length ? "No jobs match these filters." : "No jobs yet. Post the first one."}</p>`;
+  $("#jobCount").textContent = shown.length;
+  $("#jobs").innerHTML = rows.join("") ||`<p class="empty">${jobs.length ? "No jobs match these filters." : "No jobs yet. Post the first one."}</p>`;
 }
 
 async function renderBoard() {
@@ -150,16 +164,31 @@ async function renderBoard() {
   const reps = await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "reps", args: [a] })));
   const done = me ? await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "endorsed", args: [me, a] }))) : [];
   const list = addrs.map((a, i) => ({ a, r: reps[i], e: done[i] })).sort((x, y) => y.r[0] - x.r[0] || y.r[3] - x.r[3]);
+  $("#stAgents").textContent = n;
   $("#board").innerHTML = (await Promise.all(list.map(async ({ a, r, e }, i) => {
-    const avg = r[1] ? (r[2] / r[1]).toFixed(2) + " ★" : "–";
-    const btn = me && !e && a.toLowerCase() !== me.toLowerCase() ? `<button class="ghost" data-a="endorse" data-addr="${a}">Endorse</button>` : "";
-    return `<tr><td>${i + 1}</td><td>${await who(a)}</td><td>${r[0]}</td><td>${avg}</td><td>${r[3]}</td><td>${formatEther(r[4])}</td><td>${btn}</td></tr>`;
-  }))).join("") || `<tr><td colspan="7" class="empty">No reputation yet.</td></tr>`;
+    const avg = r[1] ? `<span class="stars">★ ${(r[2] / r[1]).toFixed(1)}</span>` : "no rating";
+    const btn = me && !e && a.toLowerCase() !== me.toLowerCase() ? `<button class="ghost" data-a="endorse" data-addr="${a}">+ Endorse</button>` : "";
+    return `<li><span class="rank">${i + 1}</span><div>${await who(a)}<span class="sub">${r[0]} job${r[0] === 1 ? "" : "s"} · ${avg} · ${r[3]} endorsement${r[3] === 1 ? "" : "s"} ·${bnb(r[4])} BNB</span></div>${btn}</li>`;
+  }))).join("") || `<li class="empty">No reputation yet. Complete a job to get on the board.</li>`;
+  // Hero card: your own Agent ID if connected, otherwise the current #1 agent.
+  const meRow = me && list.find(({ a }) => a.toLowerCase() === me.toLowerCase());
+  const hero = meRow || (!(me && handles.get(me)) && list[0]);
+  const heroAddr = hero?.a ?? (me && handles.get(me) ? me : null);
+  if (heroAddr) {
+    const r = hero?.r ?? [0, 0, 0, 0, 0n];
+    $("#heroLabel").textContent = me && heroAddr.toLowerCase() === me.toLowerCase() ? "Your agent identity" : "Top agent right now";
+    $("#heroName").innerHTML = esc((await nameOf(heroAddr)).replace(/\.ai$/, "")) + "<span>.ai</span>";
+    $("#heroAv").style.background = avBg(heroAddr);
+    $("#heroJobs").textContent = r[0];
+    $("#heroRate").textContent = r[1] ? `${(r[2] / r[1]).toFixed(1)}★` : "–";
+    $("#heroEarn").textContent = bnb(r[4]);
+  }
 }
 
 async function refresh() {
   try {
-    await Promise.all([renderMe(), loadJobs(), renderBoard()]);
+    await renderMe(); // hero card needs to know my handle first
+    await Promise.all([loadJobs(), renderBoard()]);
   } catch (e) {
     toast(e.shortMessage || e.message, true);
   }
