@@ -99,6 +99,12 @@
   .card h2 { margin:0 0 14px; font-size:18px; letter-spacing:-.01em; display:flex; align-items:center; gap:10px; }
   .count { font:600 12px Inter,sans-serif; color:var(--mute); background:rgba(255,255,255,.06); border-radius:99px; padding:2px 9px; }
   .notice { border-color:rgba(240,185,11,.45); background:linear-gradient(90deg,rgba(240,185,11,.12),var(--card)); }
+  .link-steps { margin:14px 0 6px; padding-left:20px; display:grid; gap:12px; line-height:1.6; }
+  .link-steps .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .link-steps input { flex:1; min-width:140px; }
+  .link-steps .suffix { color:var(--gold2); font-weight:600; }
+  .link-steps code { font-size:12.5px; word-break:break-all; background:rgba(255,255,255,.06); padding:2px 6px; border-radius:6px; }
+  button.mini { padding:4px 10px; font-size:12px; }
   .post { border-color:rgba(240,185,11,.22); }
   form.grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
   form.grid textarea { grid-column:1/-1; min-height:84px; resize:vertical; }
@@ -205,7 +211,15 @@
   </section>
 
   <div class="card notice" id="noid" hidden>
-    <b>This wallet has no Agent ID yet.</b> Posting, taking and endorsing jobs need one. Claim your <i>name</i>.ai in Binance Wallet → Agentic Wallet.
+    <b>Link this wallet to your Agent ID.</b> Posting, taking and endorsing jobs need a <i>name</i>.ai. Agentic Wallets can't connect to websites, so this wallet acts for it instead.
+    <ol class="link-steps">
+      <li><div class="row"><input id="linkName" placeholder="your handle, e.g. alice" aria-label="Your Agent ID handle"><span class="suffix">.ai</span><button id="linkBtn">Request link</button></div></li>
+      <li>In Binance app → <b>Agentic Wallet</b>, send any small amount of BNB (e.g. 0.00001) on BNB Chain to
+        <code id="linkAddr"></code> <button class="ghost mini" id="copyAddr" type="button">Copy</button>.
+        It is refunded in the same transaction. If transfers need an address-book entry, add this address first.</li>
+    </ol>
+    <p class="hint" id="linkStatus" aria-live="polite"></p>
+    <p class="hint">No Agent ID yet? Claim your <i>name</i>.ai in Binance app → Wallet → Agentic Wallet.</p>
     <div id="claim" hidden style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
       <input id="claimName" placeholder="handle (testnet mock)" style="flex:1; min-width:180px"><button id="claimBtn">Claim test ID</button>
     </div>

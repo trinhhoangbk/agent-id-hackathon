@@ -196,4 +196,95 @@ contract AgentJobsTest is Test {
         vm.expectRevert(AgentJobs.TagTooLong.selector);
         jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1), "", "this-tag-is-way-too-long-for-the-limit");
     }
+
+    // ---- linking a normal wallet to an Agent ID (the Agentic Wallet can't connect to dApps) ----
+
+    address hot = makeAddr("hot"); // e.g. the user's normal Binance Wallet account, no Agent ID
+
+    function _link(address controller, address idWallet, string memory h) internal {
+        vm.prank(controller);
+        jobs.requestLink(h);
+        vm.deal(idWallet, idWallet.balance + 0.001 ether);
+        uint256 before = idWallet.balance;
+        vm.prank(idWallet);
+        (bool ok,) = address(jobs).call{value: 0.001 ether}("");
+        assertTrue(ok);
+        assertEq(idWallet.balance, before, "confirming transfer is refunded");
+    }
+
+    function test_linkedWalletActsForAgentID() public {
+        _link(hot, agent, "bot");
+        assertEq(jobs.identityOf(hot), agent);
+        assertEq(jobs.controllerOf(agent), hot);
+        uint256 j = _create("bot"); // assigned to bot.ai
+        vm.prank(hot);
+        jobs.takeJob(j);
+        vm.prank(hot);
+        jobs.submit(j, "done");
+        assertEq(jobs.getJob(j).agent, agent, "job is credited to the Agent ID, not the hot wallet");
+        uint256 before = agent.balance;
+        vm.prank(client);
+        jobs.approve(j, 4);
+        assertEq(agent.balance - before, 1 ether, "earnings go to the name.ai wallet");
+        (uint32 done,,,,) = rep.reps(agent);
+        assertEq(done, 1);
+    }
+
+    function test_linkedWalletPostsAndRefunds() public {
+        _link(nobody, client, "alice");
+        vm.prank(nobody);
+        uint256 j = jobs.createJob{value: 1 ether}("x", uint40(block.timestamp + 1 days), "", "");
+        assertEq(jobs.getJob(j).client, client);
+        uint256 before = nobody.balance;
+        vm.prank(nobody);
+        jobs.refund(j);
+        assertEq(nobody.balance, before + 1 ether);
+    }
+
+    function test_linkedWalletEndorses() public {
+        _link(hot, agent, "bot");
+        vm.prank(hot);
+        rep.endorse(other);
+        assertTrue(rep.endorsed(agent, other));
+        vm.prank(hot);
+        vm.expectRevert(AgentReputation.SelfEndorse.selector);
+        rep.endorse(agent);
+    }
+
+    function test_linkNeedsConfirmFromIdWallet() public {
+        vm.prank(hot);
+        jobs.requestLink("bot");
+        assertEq(jobs.identityOf(hot), address(0), "request alone grants nothing");
+        vm.deal(other, 1 ether);
+        vm.prank(other); // a different Agent ID wallet can't confirm bot's request
+        (bool ok,) = address(jobs).call{value: 1}("");
+        assertFalse(ok);
+        vm.warp(block.timestamp + 1 hours);
+        vm.deal(agent, 1 ether);
+        vm.prank(agent); // expired
+        (ok,) = address(jobs).call{value: 1}("");
+        assertFalse(ok);
+    }
+
+    function test_pendingLinkCannotBeHijacked() public {
+        vm.prank(hot);
+        jobs.requestLink("bot");
+        vm.prank(nobody);
+        vm.expectRevert(AgentJobs.LinkPending.selector);
+        jobs.requestLink("bot");
+        vm.warp(block.timestamp + 1 hours); // after expiry anyone may request again
+        vm.prank(nobody);
+        jobs.requestLink("bot");
+    }
+
+    function test_relinkAndUnlink() public {
+        _link(hot, agent, "bot");
+        _link(nobody, agent, "bot"); // new wallet replaces the old one
+        assertEq(jobs.identityOf(hot), address(0));
+        assertEq(jobs.identityOf(nobody), agent);
+        vm.prank(nobody);
+        jobs.unlink();
+        assertEq(jobs.identityOf(nobody), address(0));
+        assertEq(jobs.controllerOf(agent), address(0));
+    }
 }

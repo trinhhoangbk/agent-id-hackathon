@@ -7,8 +7,8 @@ export const DEPLOYMENTS = {
     rpc: "https://bsc-dataseed.bnbchain.org",
     explorer: "https://bscscan.com",
     agentId: "0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F",
-    jobs: "0xd8488651501763Ab4e51A0Be139b1E470B4e8Eb4",
-    reputation: "0xDB026C5EF668c27E5Fd100cdB5a3Fa992371aB51",
+    jobs: "0x90c61296F20edDF284F5c2944EE102328F71a437",
+    reputation: "0x963E45D63BF80dF2B01794F1F877902AA67af227",
   },
   97: {
     name: "BNB Smart Chain Testnet",

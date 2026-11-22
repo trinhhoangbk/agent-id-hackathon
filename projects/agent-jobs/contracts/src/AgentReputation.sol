@@ -3,6 +3,10 @@ pragma solidity ^0.8.24;
 
 import {IAgentID} from "./IAgentID.sol";
 
+interface IIdentity {
+    function identityOf(address) external view returns (address);
+}
+
 /// Non-transferable reputation keyed by Agent ID holder. Because Agent IDs are
 /// soulbound and one-per-user, this score cannot be bought or farmed with fresh wallets.
 /// Job stats are written only by AgentJobs (its deployer); endorsements by any holder.
@@ -52,14 +56,16 @@ contract AgentReputation {
         emit JobRecorded(agent, client, jobId, rating, amount);
     }
 
+    /// Callable from an Agent ID wallet or a wallet linked to one in AgentJobs.
     function endorse(address to) external {
-        if (agentId.balanceOf(msg.sender) == 0 || agentId.balanceOf(to) == 0) revert NoAgentID();
-        if (to == msg.sender) revert SelfEndorse();
-        if (endorsed[msg.sender][to]) revert AlreadyEndorsed();
-        endorsed[msg.sender][to] = true;
+        address from = IIdentity(jobs).identityOf(msg.sender);
+        if (from == address(0) || agentId.balanceOf(to) == 0) revert NoAgentID();
+        if (to == from) revert SelfEndorse();
+        if (endorsed[from][to]) revert AlreadyEndorsed();
+        endorsed[from][to] = true;
         reps[to].endorsements++;
         _track(to);
-        emit Endorsed(msg.sender, to);
+        emit Endorsed(from, to);
     }
 
     function agentsCount() external view returns (uint256) {

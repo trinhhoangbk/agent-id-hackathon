@@ -26,6 +26,9 @@ const jobsAbi = parseAbi([
   "function jobsCount() view returns (uint256)",
   "function getJob(uint256) view returns ((address client, address agent, uint96 reward, uint40 deadline, uint40 submittedAt, uint8 status, string spec, string result, string tag))",
   "function REVIEW_PERIOD() view returns (uint256)",
+  "function identityOf(address) view returns (address)",
+  "function requestLink(string handle)",
+  "function pendingLink(address) view returns (address controller, uint40 expires)",
 ]);
 const repAbi = parseAbi([
   "function agentsCount() view returns (uint256)",
@@ -36,7 +39,8 @@ const repAbi = parseAbi([
 ]);
 
 const pub = createPublicClient({ chain, transport: http(D.rpc) });
-let wallet, me;
+let wallet, me; // me = connected account that signs
+let my = null; // the Agent ID wallet I act as: me itself, or the name.ai this wallet is linked to
 let jobs = []; // [{ id, j }] newest first
 let review = 0;
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -123,13 +127,35 @@ async function connect() {
 
 async function renderMe() {
   if (!me) return;
-  const h = await pub.readContract({ address: D.agentId, abi: idAbi, functionName: "handleOf", args: [me] });
-  handles.set(me, h);
-  $("#connect").textContent = h ? `${h}.ai` : short(me);
-  $("#connect").title = "Switch wallet";
+  const id = await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "identityOf", args: [me] });
+  my = id === ZERO ? null : id;
+  const name = my && (await nameOf(my));
+  $("#connect").textContent = name || short(me);
+  $("#connect").title = my && my.toLowerCase() !== me.toLowerCase() ? `Wallet ${short(me)} acting for ${name}. Click to switch wallet` : "Switch wallet";
   $("#logout").hidden = false;
-  $("#noid").hidden = !!h;
-  $("#claim").hidden = CHAIN === 56 || !!h; // mock registry only exists on testnet
+  $("#noid").hidden = !!my;
+  $("#claim").hidden = CHAIN === 56 || !!my; // mock registry only exists on testnet
+}
+
+// Link flow: this wallet asks to act for handle.ai, then the Agentic Wallet confirms with a plain BNB transfer.
+let linkPoll;
+async function linkStatus() {
+  const st = $("#linkStatus"), h = $("#linkName").value.trim().replace(/\.ai$/, "");
+  if (!me || !h) return (st.textContent = "");
+  const owner = await pub.readContract({ address: D.agentId, abi: idAbi, functionName: "ownerOfHandle", args: [h] });
+  if (owner === ZERO) return (st.textContent = `${h}.ai does not exist.`);
+  const [ctrl, exp] = await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "pendingLink", args: [owner] });
+  const live = Number(exp) * 1000 > Date.now(), until = new Date(Number(exp) * 1000).toLocaleTimeString([], { timeStyle: "short" });
+  if (!live || ctrl === ZERO) st.textContent = "Step 1: request the link from this wallet.";
+  else if (ctrl.toLowerCase() === me.toLowerCase()) st.textContent = `⏳ Waiting for ${h}.ai's Agentic Wallet to send BNB (step 2) before ${until}…`;
+  else st.textContent = `⚠ Another wallet (${short(ctrl)}) has a pending request for ${h}.ai until ${until}. Don't send BNB now, or that wallet gets linked.`;
+}
+function watchLink() {
+  clearInterval(linkPoll);
+  linkPoll = setInterval(async () => {
+    const id = await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "identityOf", args: [me] });
+    if (id !== ZERO) { clearInterval(linkPoll); toast("Linked ✓"); await refresh(); } else linkStatus();
+  }, 5000);
 }
 
 async function loadJobs() {
@@ -161,13 +187,13 @@ function matches({ j }) {
 
 async function drawJobs() {
   const now = Date.now() / 1000;
-  const meL = me?.toLowerCase();
+  const meL = my?.toLowerCase();
   const shown = jobs.filter(matches);
   const rows = await Promise.all(shown.map(async ({ id, j }) => {
     const isClient = j.client.toLowerCase() === meL, isAgent = j.agent.toLowerCase() === meL;
     const late = now >= Number(j.deadline);
     const acts = [];
-    if (j.status === 0 && !isClient && !late && (j.agent === ZERO || isAgent)) acts.push(`<button data-a="take" data-id="${id}">Take job</button>`);
+    if (j.status === 0 && my && !isClient && !late && (j.agent === ZERO || isAgent)) acts.push(`<button data-a="take" data-id="${id}">Take job</button>`);
     if (j.status === 1 && isAgent && !late) acts.push(`<input placeholder="Result (text / link)" id="res${id}"><button data-a="submit" data-id="${id}">Submit</button>`);
     if (j.status === 2 && isClient) acts.push(`<select id="rate${id}">${[5, 4, 3, 2, 1].map((r) => `<option>${r}</option>`).join("")}</select><button data-a="approve" data-id="${id}">Approve &amp; pay</button>`);
     if (j.status === 2 && isAgent && now >= Number(j.submittedAt) + review) acts.push(`<button data-a="release" data-id="${id}">Release payment</button>`);
@@ -188,21 +214,21 @@ async function renderBoard() {
   const n = Number(await pub.readContract({ address: D.reputation, abi: repAbi, functionName: "agentsCount" }));
   const addrs = await Promise.all([...Array(n).keys()].map((i) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "agents", args: [BigInt(i)] })));
   const reps = await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "reps", args: [a] })));
-  const done = me ? await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "endorsed", args: [me, a] }))) : [];
+  const done = my ? await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "endorsed", args: [my, a] }))) : [];
   const list = addrs.map((a, i) => ({ a, r: reps[i], e: done[i] })).sort((x, y) => y.r[0] - x.r[0] || y.r[3] - x.r[3]);
   $("#stAgents").textContent = n;
   $("#board").innerHTML = (await Promise.all(list.map(async ({ a, r, e }, i) => {
     const avg = r[1] ? `<span class="stars">★ ${(r[2] / r[1]).toFixed(1)}</span>` : "no rating";
-    const btn = me && !e && a.toLowerCase() !== me.toLowerCase() ? `<button class="ghost" data-a="endorse" data-addr="${a}">+ Endorse</button>` : "";
+    const btn = my && !e && a.toLowerCase() !== my.toLowerCase() ? `<button class="ghost" data-a="endorse" data-addr="${a}">+ Endorse</button>` : "";
     return `<li><span class="rank">${i + 1}</span><div>${await who(a)}<span class="sub">${r[0]} job${r[0] === 1 ? "" : "s"} · ${avg} · ${r[3]} endorsement${r[3] === 1 ? "" : "s"} ·${bnb(r[4])} BNB</span></div>${btn}</li>`;
   }))).join("") || `<li class="empty">No reputation yet. Complete a job to get on the board.</li>`;
   // Hero card: your own Agent ID if connected, otherwise the current #1 agent.
-  const meRow = me && list.find(({ a }) => a.toLowerCase() === me.toLowerCase());
-  const hero = meRow || (!(me && handles.get(me)) && list[0]);
-  const heroAddr = hero?.a ?? (me && handles.get(me) ? me : null);
+  const meRow = my && list.find(({ a }) => a.toLowerCase() === my.toLowerCase());
+  const hero = meRow || (!my && list[0]);
+  const heroAddr = hero?.a ?? my;
   if (heroAddr) {
     const r = hero?.r ?? [0, 0, 0, 0, 0n];
-    $("#heroLabel").textContent = me && heroAddr.toLowerCase() === me.toLowerCase() ? "Your agent identity" : "Top agent right now";
+    $("#heroLabel").textContent = my && heroAddr.toLowerCase() === my.toLowerCase() ? "Your agent identity" : "Top agent right now";
     $("#heroName").innerHTML = esc((await nameOf(heroAddr)).replace(/\.ai$/, "")) + "<span>.ai</span>";
     $("#heroAv").style.background = avBg(heroAddr);
     $("#heroJobs").textContent = r[0];
@@ -227,6 +253,14 @@ $("#logout").onclick = async () => {
   // the page never auto-connects, so a reload is a full disconnect; revoking also makes the wallet forget this site
   try { await eth?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] }); } catch {}
   location.reload();
+};
+$("#linkAddr").textContent = D.jobs;
+$("#copyAddr").onclick = () => navigator.clipboard?.writeText(D.jobs).then(() => toast("Address copied"));
+$("#linkName").oninput = () => linkStatus().catch(() => {});
+$("#linkBtn").onclick = async () => {
+  const h = $("#linkName").value.trim().replace(/\.ai$/, "");
+  if (!h) return toast("Enter your Agent ID handle", true);
+  if (await send(D.jobs, jobsAbi, "requestLink", [h])) { await linkStatus(); watchLink(); }
 };
 $("#claimBtn").onclick = () => send(D.agentId, idAbi, "claim", [$("#claimName").value.trim().replace(/\.ai$/, "")]);
 $("#create").onsubmit = async (e) => {
