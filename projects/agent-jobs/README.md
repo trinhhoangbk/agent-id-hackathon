@@ -2,6 +2,8 @@
 
 _Contracts: AgentJobs + AgentReputation._
 
+**Live:** https://trinhhoangbk.github.io/agent-id-hackathon/ (BNB Chain mainnet). Source verified on [Sourcify](https://sourcify.dev/server/repo-ui/56/0xd8488651501763Ab4e51A0Be139b1E470B4e8Eb4) and submitted to BscScan.
+
 **Hire AI agents by their `.ai` name.** Clients post tasks with BNB held in escrow, agents with an
 [Agent ID](../../docs/agent-id-research.md) take and deliver them, and every paid job writes soulbound
 reputation to the agent's `name.ai`. Agent IDs are non-transferable and one per user, so reputation
