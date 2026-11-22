@@ -1,0 +1,166 @@
+import {
+  createPublicClient, createWalletClient, custom, http, parseAbi, parseEther, formatEther, defineChain,
+} from "https://cdn.jsdelivr.net/npm/viem@2.21.55/+esm";
+import { CHAIN, DEPLOYMENTS } from "./config.js";
+
+const D = DEPLOYMENTS[CHAIN];
+const chain = defineChain({
+  id: CHAIN, name: D.name, nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+  rpcUrls: { default: { http: [D.rpc] } }, blockExplorers: { default: { name: "BscScan", url: D.explorer } },
+});
+
+const idAbi = parseAbi([
+  "function balanceOf(address) view returns (uint256)",
+  "function handleOf(address) view returns (string)",
+  "function ownerOfHandle(string) view returns (address)",
+  "function claim(string)",
+]);
+const jobsAbi = parseAbi([
+  "function createJob(string spec, uint40 deadline, string assignee) payable returns (uint256)",
+  "function takeJob(uint256)",
+  "function submit(uint256, string)",
+  "function approve(uint256, uint8)",
+  "function release(uint256)",
+  "function refund(uint256)",
+  "function jobsCount() view returns (uint256)",
+  "function getJob(uint256) view returns ((address client, address agent, uint96 reward, uint40 deadline, uint40 submittedAt, uint8 status, string spec, string result))",
+  "function REVIEW_PERIOD() view returns (uint256)",
+]);
+const repAbi = parseAbi([
+  "function agentsCount() view returns (uint256)",
+  "function agents(uint256) view returns (address)",
+  "function reps(address) view returns (uint32 jobsDone, uint32 ratingCount, uint32 ratingSum, uint32 endorsements, uint128 earned)",
+  "function endorsed(address, address) view returns (bool)",
+  "function endorse(address)",
+]);
+
+const pub = createPublicClient({ chain, transport: http(D.rpc) });
+let wallet, me;
+const ZERO = "0x0000000000000000000000000000000000000000";
+const STATUS = ["Open", "Taken", "Submitted", "Paid", "Refunded"];
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const short = (a) => a.slice(0, 6) + "…" + a.slice(-4);
+const handles = new Map();
+
+async function nameOf(addr) {
+  if (!addr || addr === ZERO) return "";
+  if (!handles.has(addr)) handles.set(addr, await pub.readContract({ address: D.agentId, abi: idAbi, functionName: "handleOf", args: [addr] }));
+  const h = handles.get(addr);
+  return h ? `${h}.ai` : short(addr);
+}
+const who = async (a) => (a && a !== ZERO ? `<a href="${D.explorer}/address/${a}" target="_blank" rel="noopener">${esc(await nameOf(a))}</a>` : "anyone");
+
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = isErr ? "show err" : "show";
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.className = ""), 6000);
+}
+
+async function send(address, abi, functionName, args, value) {
+  if (!wallet) return toast("Connect wallet first", true);
+  try {
+    const hash = await wallet.writeContract({ address, abi, functionName, args, value, account: me, chain });
+    toast("Sent, waiting for confirmation…");
+    const rc = await pub.waitForTransactionReceipt({ hash });
+    if (rc.status !== "success") throw new Error("Transaction reverted on-chain");
+    toast("Confirmed ✓");
+    await refresh();
+  } catch (e) {
+    toast(e.shortMessage || e.message, true);
+  }
+}
+
+async function connect() {
+  if (!window.ethereum) return toast("No wallet found. Install Binance Wallet or MetaMask.", true);
+  wallet = createWalletClient({ chain, transport: custom(window.ethereum) });
+  [me] = await wallet.requestAddresses();
+  try { await wallet.switchChain({ id: CHAIN }); } catch { await wallet.addChain({ chain }); }
+  window.ethereum.on?.("accountsChanged", () => location.reload());
+  await refresh();
+}
+
+async function renderMe() {
+  if (!me) return;
+  const h = await pub.readContract({ address: D.agentId, abi: idAbi, functionName: "handleOf", args: [me] });
+  handles.set(me, h);
+  $("#connect").textContent = h ? `${h}.ai` : short(me);
+  $("#noid").hidden = !!h;
+  $("#claim").hidden = CHAIN === 56 || !!h; // mock registry only exists on testnet
+}
+
+async function renderJobs() {
+  const n = Number(await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "jobsCount" }));
+  const ids = [...Array(n).keys()].reverse(); // shortcut: reads every job; paginate/index events past a few hundred
+  const jobs = await Promise.all(ids.map((i) => pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "getJob", args: [BigInt(i)] })));
+  const now = Date.now() / 1000;
+  const review = Number(await pub.readContract({ address: D.jobs, abi: jobsAbi, functionName: "REVIEW_PERIOD" }));
+  const meL = me?.toLowerCase();
+  const rows = await Promise.all(jobs.map(async (j, k) => {
+    const id = ids[k];
+    const isClient = j.client.toLowerCase() === meL, isAgent = j.agent.toLowerCase() === meL;
+    const late = now >= Number(j.deadline);
+    const acts = [];
+    if (j.status === 0 && !isClient && !late && (j.agent === ZERO || isAgent)) acts.push(`<button data-a="take" data-id="${id}">Take job</button>`);
+    if (j.status === 1 && isAgent && !late) acts.push(`<input placeholder="Result (text / link)" id="res${id}"><button data-a="submit" data-id="${id}">Submit</button>`);
+    if (j.status === 2 && isClient) acts.push(`<select id="rate${id}">${[5, 4, 3, 2, 1].map((r) => `<option>${r}</option>`).join("")}</select><button data-a="approve" data-id="${id}">Approve &amp; pay</button>`);
+    if (j.status === 2 && isAgent && now >= Number(j.submittedAt) + review) acts.push(`<button data-a="release" data-id="${id}">Release payment</button>`);
+    if (isClient && (j.status === 0 || (j.status === 1 && late))) acts.push(`<button class="ghost" data-a="refund" data-id="${id}">Refund</button>`);
+    return `<article class="job s${j.status}">
+      <header><b>#${id}</b> <span class="pill">${STATUS[j.status]}</span> <span class="reward">${formatEther(j.reward)} BNB</span></header>
+      <p class="spec">${esc(j.spec)}</p>
+      ${j.result ? `<p class="result"><b>Result:</b> ${esc(j.result)}</p>` : ""}
+      <p class="meta">by ${await who(j.client)} → ${await who(j.agent)} · deadline ${new Date(Number(j.deadline) * 1000).toLocaleString()}</p>
+      ${acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}
+    </article>`;
+  }));
+  $("#jobs").innerHTML = rows.join("") || `<p class="empty">No jobs yet. Post the first one.</p>`;
+}
+
+async function renderBoard() {
+  const n = Number(await pub.readContract({ address: D.reputation, abi: repAbi, functionName: "agentsCount" }));
+  const addrs = await Promise.all([...Array(n).keys()].map((i) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "agents", args: [BigInt(i)] })));
+  const reps = await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "reps", args: [a] })));
+  const done = me ? await Promise.all(addrs.map((a) => pub.readContract({ address: D.reputation, abi: repAbi, functionName: "endorsed", args: [me, a] }))) : [];
+  const list = addrs.map((a, i) => ({ a, r: reps[i], e: done[i] })).sort((x, y) => y.r[0] - x.r[0] || y.r[3] - x.r[3]);
+  $("#board").innerHTML = (await Promise.all(list.map(async ({ a, r, e }, i) => {
+    const avg = r[1] ? (r[2] / r[1]).toFixed(2) + " ★" : "–";
+    const btn = me && !e && a.toLowerCase() !== me.toLowerCase() ?`<button class="ghost" data-a="endorse" data-addr="${a}">Endorse</button>` : "";
+    return `<tr><td>${i + 1}</td><td>${await who(a)}</td><td>${r[0]}</td><td>${avg}</td><td>${r[3]}</td><td>${formatEther(r[4])}</td><td>${btn}</td></tr>`;
+  }))).join("") || `<tr><td colspan="7" class="empty">No reputation yet.</td></tr>`;
+}
+
+async function refresh() {
+  try {
+    await Promise.all([renderMe(), renderJobs(), renderBoard()]);
+  } catch (e) {
+    toast(e.shortMessage || e.message, true);
+  }
+}
+
+$("#connect").onclick = connect;
+$("#claimBtn").onclick = () => send(D.agentId, idAbi, "claim", [$("#claimName").value.trim().replace(/\.ai$/, "")]);
+$("#create").onsubmit = (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const deadline = BigInt(Math.floor(Date.now() / 1000 + Number(f.days.value) * 86400));
+  send(D.jobs, jobsAbi, "createJob", [f.spec.value.trim(), deadline, f.assignee.value.trim().replace(/\.ai$/, "")], parseEther(f.reward.value));
+};
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-a]");
+  if (!b) return;
+  const id = BigInt(b.dataset.id ?? 0);
+  const a = b.dataset.a;
+  if (a === "take") send(D.jobs, jobsAbi, "takeJob", [id]);
+  if (a === "submit") send(D.jobs, jobsAbi, "submit", [id, $(`#res${id}`).value.trim()]);
+  if (a === "approve") send(D.jobs, jobsAbi, "approve", [id, Number($(`#rate${id}`).value)]);
+  if (a === "release") send(D.jobs, jobsAbi, "release", [id]);
+  if (a === "refund") send(D.jobs, jobsAbi, "refund", [id]);
+  if (a === "endorse") send(D.reputation, repAbi, "endorse", [b.dataset.addr]);
+});
+
+$("#net").textContent = D.name;
+$("#contracts").innerHTML = `AgentJobs <a href="${D.explorer}/address/${D.jobs}#code" target="_blank" rel="noopener">${short(D.jobs || ZERO)}</a> · Reputation <a href="${D.explorer}/address/${D.reputation}#code" target="_blank" rel="noopener">${short(D.reputation || ZERO)}</a>`;
+if (D.jobs) refresh(); else $("#jobs").innerHTML = `<p class="empty">Contracts not deployed on this network yet.</p>`;
