@@ -88,15 +88,36 @@ async function send(address, abi, functionName, args, value) {
   }
 }
 
+// EIP-6963: every installed wallet announces itself, so the user can pick Binance Wallet even when
+// another extension (e.g. MetaMask) has taken over window.ethereum.
+const wallets = [];
+addEventListener("eip6963:announceProvider", (e) => {
+  if (!wallets.some((w) => w.info.uuid === e.detail.info.uuid)) wallets.push(e.detail);
+});
+dispatchEvent(new Event("eip6963:requestProvider"));
+let eth; // the provider the user picked
+
+function pickWallet() {
+  if (wallets.length <= 1) return Promise.resolve(wallets[0]?.provider ?? window.ethereum);
+  const d = $("#pick");
+  $("#pickList").innerHTML = wallets.map((w, i) =>
+    `<button class="ghost" value="${i}"><img src="${esc(w.info.icon)}" width="22" height="22" alt="">${esc(w.info.name)}</button>`).join("");
+  d.returnValue = "";
+  d.showModal();
+  return new Promise((res) => (d.onclose = () => res(d.returnValue ? wallets[+d.returnValue]?.provider : null)));
+}
+
 async function connect() {
-  if (!window.ethereum) return toast("No wallet found. Install Binance Wallet or MetaMask.", true);
-  wallet = createWalletClient({ chain, transport: custom(window.ethereum) });
+  if (!wallets.length && !window.ethereum) return toast("No wallet found. Install Binance Wallet or MetaMask.", true);
+  eth = await pickWallet();
+  if (!eth) return;
+  wallet = createWalletClient({ chain, transport: custom(eth) });
   // ask the wallet to show its account picker, so a wrong account can be swapped out
-  try { await window.ethereum.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] }); }
+  try { await eth.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] }); }
   catch (e) { if (e?.code === 4001) return; } // user closed the picker; other errors = wallet lacks the method
   [me] = await wallet.requestAddresses();
   try { await wallet.switchChain({ id: CHAIN }); } catch { await wallet.addChain({ chain }); }
-  window.ethereum.on?.("accountsChanged", () => location.reload());
+  eth.on?.("accountsChanged", () => location.reload());
   await refresh();
 }
 
@@ -204,7 +225,7 @@ $("#tagList").innerHTML = TAGS.map((t) => `<option value="${t.tag}">`).join("");
 $("#connect").onclick = connect;
 $("#logout").onclick = async () => {
   // the page never auto-connects, so a reload is a full disconnect; revoking also makes the wallet forget this site
-  try { await window.ethereum?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] }); } catch {}
+  try { await eth?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] }); } catch {}
   location.reload();
 };
 $("#claimBtn").onclick = () => send(D.agentId, idAbi, "claim", [$("#claimName").value.trim().replace(/\.ai$/, "")]);

@@ -38,6 +38,12 @@
   .acct { display:flex; gap:8px; min-width:0; }
   .acct #connect { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
   .acct #logout { padding:10px 12px; }
+  #pick { background:#14161d; color:var(--ink); border:1px solid var(--line); border-radius:16px; padding:20px; width:min(340px, calc(100vw - 32px)); }
+  #pick::backdrop { background:rgba(0,0,0,.6); backdrop-filter:blur(4px); }
+  #pick h3 { margin:0 0 12px; font:600 18px "Space Grotesk",sans-serif; }
+  #pickList { display:grid; gap:8px; margin-bottom:12px; }
+  #pickList button { justify-content:flex-start; gap:10px; width:100%; }
+  #pickList img { border-radius:6px; }
   .brand { display:flex; align-items:center; gap:10px; font-weight:700; font-size:20px; letter-spacing:-.02em; }
   .logo { width:32px; height:32px; border-radius:9px; background:linear-gradient(135deg,var(--gold),var(--gold2)); display:grid; place-items:center; box-shadow:0 0 24px rgba(240,185,11,.45); }
   .net { display:inline-flex; align-items:center; gap:6px; color:var(--mute); font:500 12px Inter,sans-serif; letter-spacing:0; }
@@ -165,6 +171,12 @@
     <div class="acct"><button id="connect">Connect wallet</button><button id="logout" class="ghost" hidden title="Disconnect wallet" aria-label="Disconnect wallet"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button></div>
   </div>
 </nav>
+
+<dialog id="pick"><form method="dialog">
+  <h3>Choose a wallet</h3>
+  <div id="pickList"></div>
+  <button class="ghost" value="">Cancel</button>
+</form></dialog>
 
 <main class="wrap">
   <section class="hero">
