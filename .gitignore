@@ -4,3 +4,6 @@ out/
 cache/
 broadcast/*/31337/
 dist/
+**/broadcast/**/dry-run/
+**/broadcast/**/run-[0-9]*.json
+*.recovery.lock
